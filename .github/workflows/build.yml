@@ -1,9 +1,3 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# X-OPT Engine — GitHub Actions Build Pipeline
-# Compiles the release binary using MSVC + vcpkg + CMake on Windows
-# Artifact: X-OPT.exe (uploaded to GitHub Releases on tag push)
-# ──────────────────────────────────────────────────────────────────────────────
-
 name: Build X-OPT
 
 on:
@@ -12,7 +6,7 @@ on:
     tags:     [ "v*.*.*" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch:        # Allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,9 +14,10 @@ jobs:
     runs-on: windows-latest
 
     env:
-      BUILD_TYPE:    Release
-      VCPKG_ROOT:    C:/vcpkg
-      BINARY_NAME:   X-OPT.exe
+      BUILD_TYPE:               Release
+      VCPKG_ROOT:               C:/vcpkg
+      # Overrides the runner's built-in VS vcpkg path — critical fix
+      VCPKG_INSTALLATION_ROOT:  C:/vcpkg
 
     steps:
       # ── 1. Checkout ─────────────────────────────────────────────────────────
@@ -31,7 +26,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── 2. Setup MSVC developer environment ────────────────────────────────
+      # ── 2. Setup MSVC ───────────────────────────────────────────────────────
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v2
 
@@ -40,72 +35,83 @@ jobs:
         with:
           arch: x64
 
-      # ── 3. Cache vcpkg binary cache ────────────────────────────────────────
+      # ── 3. Cache vcpkg packages ─────────────────────────────────────────────
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
-          path: |
-            C:/vcpkg
-            C:/Users/runneradmin/AppData/Local/vcpkg/archives
+          path: C:/vcpkg/installed
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-
+          restore-keys: vcpkg-${{ runner.os }}-
 
-      # ── 4. Bootstrap vcpkg ─────────────────────────────────────────────────
+      # ── 4. Clone + Bootstrap vcpkg at C:/vcpkg ─────────────────────────────
       - name: Bootstrap vcpkg
+        shell: pwsh
         run: |
-          # Always clone to C:/vcpkg — avoids collision with VS built-in vcpkg
           if (Test-Path "C:/vcpkg/.git") {
-            Write-Host "vcpkg already cloned, pulling latest..."
-            git -C C:/vcpkg pull
+            Write-Host "vcpkg already present, updating..."
+            git -C C:/vcpkg pull --ff-only
           } else {
-            Write-Host "Cloning vcpkg to C:/vcpkg..."
+            Write-Host "Cloning vcpkg..."
             git clone https://github.com/microsoft/vcpkg.git C:/vcpkg
           }
-          Write-Host "Bootstrapping vcpkg..."
           & "C:/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
-          Write-Host "vcpkg ready at C:/vcpkg"
-        shell: pwsh
+          Write-Host "vcpkg bootstrapped at C:/vcpkg"
+          & "C:/vcpkg/vcpkg.exe" version
 
-      # ── 5. Configure CMake ─────────────────────────────────────────────────
+      # ── 5. Inject builtin-baseline into vcpkg.json ─────────────────────────
+      - name: Inject vcpkg baseline
+        shell: pwsh
+        run: |
+          $baseline = git -C C:/vcpkg rev-parse HEAD
+          Write-Host "vcpkg baseline: $baseline"
+          $manifest = Get-Content vcpkg.json -Raw | ConvertFrom-Json
+          $manifest | Add-Member -Force -NotePropertyName "builtin-baseline" -NotePropertyValue $baseline
+          $manifest | ConvertTo-Json -Depth 10 | Set-Content vcpkg.json
+          Write-Host "vcpkg.json updated:"
+          Get-Content vcpkg.json
+
+      # ── 6. Configure CMake ──────────────────────────────────────────────────
       - name: Configure CMake
+        shell: pwsh
         run: |
           cmake -B build `
             -G "Visual Studio 17 2022" `
             -A x64 `
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
-            -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DVCPKG_MANIFEST_MODE=ON `
             -DCMAKE_INSTALL_PREFIX=dist
-        shell: pwsh
 
-      # ── 6. Build ───────────────────────────────────────────────────────────
+      # ── 7. Build ────────────────────────────────────────────────────────────
       - name: Build
-        run: |
-          cmake --build build `
-            --config ${{ env.BUILD_TYPE }} `
-            --parallel ${{ steps.cpu-count.outputs.count }}
         shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel 4
 
-      # ── 7. Locate binary ───────────────────────────────────────────────────
+      # ── 8. Locate the .exe ──────────────────────────────────────────────────
       - name: Locate executable
         id: locate
+        shell: pwsh
         run: |
           $bin = Get-ChildItem -Recurse -Filter "X-OPT.exe" build/ | Select-Object -First 1
-          if ($null -eq $bin) { Write-Error "X-OPT.exe not found!"; exit 1 }
+          if ($null -eq $bin) {
+            Write-Error "X-OPT.exe not found! Listing build output:"
+            Get-ChildItem -Recurse build/ | Select-Object FullName
+            exit 1
+          }
+          Write-Host "Found: $($bin.FullName)"
           echo "EXE_PATH=$($bin.FullName)" >> $env:GITHUB_OUTPUT
-          echo "Found: $($bin.FullName)"
-        shell: pwsh
 
-      # ── 8. Upload build artifact ───────────────────────────────────────────
-      - name: Upload build artifact
+      # ── 9. Upload artifact ──────────────────────────────────────────────────
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: X-OPT-${{ runner.os }}-${{ github.sha }}
+          name: X-OPT-Windows-${{ github.sha }}
           path: ${{ steps.locate.outputs.EXE_PATH }}
           retention-days: 30
 
-      # ── 9. Create GitHub Release on version tag ────────────────────────────
+      # ── 10. GitHub Release on version tag ───────────────────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -116,19 +122,7 @@ jobs:
           files: ${{ steps.locate.outputs.EXE_PATH }}
           body: |
             ## X-OPT Engine ${{ github.ref_name }}
-
-            ### 🚀 What's inside
-            - **Boost Engine** — High Performance power, 1ms timer, Game Mode, Network optimisation
-            - **Deep Clean** — %TEMP%, Windows\\Temp, Prefetch, DNS cache
-            - **Game Launcher** — Launch any .exe with HIGH priority class
-            - **Phonk Player** — Background music with animated visualiser
-
-            ### ⚠️ Requirements
-            - Windows 10 / 11 (64-bit)
-            - Run as **Administrator** for full effect
-            - DirectX 11 capable GPU (virtually all modern PCs)
-
-            ### 📦 Installation
-            Just download `X-OPT.exe` and run it. No installer needed.
+            - Boost Engine, Deep Clean, Game Launcher, Phonk Player
+            - Run as Administrator on Windows 10/11 (64-bit)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
