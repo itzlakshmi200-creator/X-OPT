@@ -21,7 +21,7 @@ jobs:
 
     env:
       BUILD_TYPE:    Release
-      VCPKG_ROOT:    ${{ github.workspace }}/vcpkg
+      VCPKG_ROOT:    C:/vcpkg
       BINARY_NAME:   X-OPT.exe
 
     steps:
@@ -45,9 +45,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ${{ env.VCPKG_ROOT }}
-            ~/.cache/vcpkg
-            ~/AppData/Local/vcpkg/archives
+            C:/vcpkg
+            C:/Users/runneradmin/AppData/Local/vcpkg/archives
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-
@@ -55,10 +54,17 @@ jobs:
       # ── 4. Bootstrap vcpkg ─────────────────────────────────────────────────
       - name: Bootstrap vcpkg
         run: |
-          if (!(Test-Path "$env:VCPKG_ROOT")) {
-            git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
+          # Always clone to C:/vcpkg — avoids collision with VS built-in vcpkg
+          if (Test-Path "C:/vcpkg/.git") {
+            Write-Host "vcpkg already cloned, pulling latest..."
+            git -C C:/vcpkg pull
+          } else {
+            Write-Host "Cloning vcpkg to C:/vcpkg..."
+            git clone https://github.com/microsoft/vcpkg.git C:/vcpkg
           }
-          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          Write-Host "Bootstrapping vcpkg..."
+          & "C:/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          Write-Host "vcpkg ready at C:/vcpkg"
         shell: pwsh
 
       # ── 5. Configure CMake ─────────────────────────────────────────────────
