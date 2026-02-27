@@ -16,9 +16,15 @@
 // ──────────────────────────────────────────────────────────────────────────────
 //  INCLUDES
 // ──────────────────────────────────────────────────────────────────────────────
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
+#include <windowsx.h>       // GET_X_LPARAM, GET_Y_LPARAM
+#include <dwmapi.h>         // DwmSetWindowAttribute, DwmExtendFrameIntoClientArea, MARGINS
 #include <d3d11.h>
 #include <tchar.h>
 #include <shellapi.h>
@@ -46,7 +52,13 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 
+// IM_PI: defined in imgui_internal.h but we avoid that dependency
+#ifndef IM_PI
+#define IM_PI 3.14159265358979323846f
+#endif
+
 #pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "powrprof.lib")
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "psapi.lib")
@@ -1300,7 +1312,6 @@ static void ApplyIOSStyle() {
     c[ImGuiCol_TabActive]             = DS::ACCENT_BLUE;
     c[ImGuiCol_PlotHistogram]         = DS::ACCENT_BLUE;
     c[ImGuiCol_PlotHistogramHovered]  = DS::Lerp(DS::ACCENT_BLUE,{1,1,1,1},0.2f);
-    c[ImGuiCol_InputTextCursor]       = DS::ACCENT_BLUE;
     c[ImGuiCol_NavHighlight]          = DS::ACCENT_BLUE;
 }
 
