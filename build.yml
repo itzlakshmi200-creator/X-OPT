@@ -1,0 +1,128 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# X-OPT Engine — GitHub Actions Build Pipeline
+# Compiles the release binary using MSVC + vcpkg + CMake on Windows
+# Artifact: X-OPT.exe (uploaded to GitHub Releases on tag push)
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Build X-OPT
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+    tags:     [ "v*.*.*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:        # Allow manual trigger from GitHub UI
+
+jobs:
+  build:
+    name: Build (Windows MSVC x64)
+    runs-on: windows-latest
+
+    env:
+      BUILD_TYPE:    Release
+      VCPKG_ROOT:    ${{ github.workspace }}/vcpkg
+      BINARY_NAME:   X-OPT.exe
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Setup MSVC developer environment ────────────────────────────────
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Add MSVC to PATH
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # ── 3. Cache vcpkg binary cache ────────────────────────────────────────
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}
+            ~/.cache/vcpkg
+            ~/AppData/Local/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      # ── 4. Bootstrap vcpkg ─────────────────────────────────────────────────
+      - name: Bootstrap vcpkg
+        run: |
+          if (!(Test-Path "$env:VCPKG_ROOT")) {
+            git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
+          }
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+        shell: pwsh
+
+      # ── 5. Configure CMake ─────────────────────────────────────────────────
+      - name: Configure CMake
+        run: |
+          cmake -B build `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DCMAKE_INSTALL_PREFIX=dist
+        shell: pwsh
+
+      # ── 6. Build ───────────────────────────────────────────────────────────
+      - name: Build
+        run: |
+          cmake --build build `
+            --config ${{ env.BUILD_TYPE }} `
+            --parallel ${{ steps.cpu-count.outputs.count }}
+        shell: pwsh
+
+      # ── 7. Locate binary ───────────────────────────────────────────────────
+      - name: Locate executable
+        id: locate
+        run: |
+          $bin = Get-ChildItem -Recurse -Filter "X-OPT.exe" build/ | Select-Object -First 1
+          if ($null -eq $bin) { Write-Error "X-OPT.exe not found!"; exit 1 }
+          echo "EXE_PATH=$($bin.FullName)" >> $env:GITHUB_OUTPUT
+          echo "Found: $($bin.FullName)"
+        shell: pwsh
+
+      # ── 8. Upload build artifact ───────────────────────────────────────────
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: X-OPT-${{ runner.os }}-${{ github.sha }}
+          path: ${{ steps.locate.outputs.EXE_PATH }}
+          retention-days: 30
+
+      # ── 9. Create GitHub Release on version tag ────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: X-OPT ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: ${{ steps.locate.outputs.EXE_PATH }}
+          body: |
+            ## X-OPT Engine ${{ github.ref_name }}
+
+            ### 🚀 What's inside
+            - **Boost Engine** — High Performance power, 1ms timer, Game Mode, Network optimisation
+            - **Deep Clean** — %TEMP%, Windows\\Temp, Prefetch, DNS cache
+            - **Game Launcher** — Launch any .exe with HIGH priority class
+            - **Phonk Player** — Background music with animated visualiser
+
+            ### ⚠️ Requirements
+            - Windows 10 / 11 (64-bit)
+            - Run as **Administrator** for full effect
+            - DirectX 11 capable GPU (virtually all modern PCs)
+
+            ### 📦 Installation
+            Just download `X-OPT.exe` and run it. No installer needed.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

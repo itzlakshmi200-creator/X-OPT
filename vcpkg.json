@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "x-opt",
+  "version": "1.0.0",
+  "description": "X-OPT — Ultimate Realtime PC Optimisation Engine",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": [
+        "dx11-binding",
+        "win32-binding"
+      ]
+    }
+  ]
+}
